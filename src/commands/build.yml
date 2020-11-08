@@ -90,6 +90,24 @@ parameters:
       Pass through a default timeout if your Docker build does not output
       anything for more than 10 minutes.
 
+  enable_docker_buildkit:
+    type: bool
+    default: false
+    description: >
+      Enables docker buildkit by setting the docker buildkit environment variable
+
+  plain_progress:
+    type: bool
+    default: true
+    description: >
+      Enables docker buildkit by setting the environment variable
+
+  enable_buildkit_cache:
+    type: bool
+    default: false
+    description: >
+      Enables the inline buildkit cache by setting the buildkit inline cache build-args
+
 steps:
   - when:
       condition: <<parameters.lint-dockerfile>>
@@ -109,27 +127,14 @@ steps:
       condition: <<parameters.cache_from>>
       steps:
         - run:
-            name: <<parameters.step-name>>
-            no_output_timeout: << parameters.no_output_timeout >>
+            name: Pulling images from cache_from
             command: |
               echo "<<parameters.cache_from>>" | sed -n 1'p' | tr ',' '\n' | while read image; do
                 echo "Pulling ${image}";
                 docker pull ${image} || true
               done
 
-              docker_tag_args=""
-
-              IFS="," read -ra DOCKER_TAGS \<<< "<< parameters.tag >>"
-              for tag in "${DOCKER_TAGS[@]}"; do
-                docker_tag_args="$docker_tag_args -t <<parameters.registry>>/<<parameters.image>>:${tag}"
-              done
-
-              docker build <<#parameters.extra_build_args>><<parameters.extra_build_args>><</parameters.extra_build_args>> \
-                --cache-from <<parameters.cache_from>> \
-                -f <<parameters.path>>/<<parameters.dockerfile>> \
-                $docker_tag_args \
-                <<parameters.docker-context>>
-  - unless:
+  - when:
       condition: <<parameters.cache_from>>
       steps:
         - run:
@@ -143,7 +148,21 @@ steps:
                 docker_tag_args="$docker_tag_args -t <<parameters.registry>>/<<parameters.image>>:${tag}"
               done
 
-              docker build <<#parameters.extra_build_args>><<parameters.extra_build_args>><</parameters.extra_build_args>> \
+              if <<parameters.enable_docker_buildkit>>; then \
+                $buidkit="DOCKERBUILDKIT=1"
+
+                if <<parameters.enable_buildkit_cache>>; then \
+                  $buildkit_cache="--build-arg BUILDKIT_INLINE_CACHE=1"
+                fi
+
+                if <<parameters.plain_progress>>; then \
+                  $buildkit_progress="--progress=plain"
+                fi
+              fi
+
+              $buildkit docker build $buildkit_cache $buildkit_progress \
+                <<#parameters.extra_build_args>><<parameters.extra_build_args>><</parameters.extra_build_args>> \
+                --cache-from <<parameters.cache_from>> \
                 -f <<parameters.path>>/<<parameters.dockerfile>> \
                 $docker_tag_args \
                 <<parameters.docker-context>>
